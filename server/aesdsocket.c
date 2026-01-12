@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <sys/wait.h>
+#include <linux/limits.h>
 
 const char *OUTPUT_FILE = "/var/tmp/aesdsocketdata";
 const char BIND_PORT[5] = "9000";
@@ -32,7 +33,7 @@ static void sig_handler(int signo)
      * prevents new sends/receives (connections?) but leaves the fd intact
      * so fd ops can be completed gracefully.
      */
-    shutdown(socket_fd, SHUT_RDWR);
+    shutdown(socket_fd, SHUT_RD);
     syslog(LOG_DEBUG, "Caught signal, exiting");
     sig_caught = 1;
 }
@@ -369,34 +370,27 @@ int main(int argc, char *argv[])
         {
             syslog(LOG_DEBUG, "Starting in daemon mode...");
             exit(EXIT_SUCCESS);
-
-            // int status;
-            // int cpid = wait(&status);
-
-            // if (WIFCONTINUED(status))
-            //     exit(EXIT_SUCCESS);
-            // else
-            // {
-            //     if (WIFEXITED(status))
-            //         syslog(LOG_ERR, "Normal termination, status=%d\n", WEXITSTATUS(status));
-
-            //     if (WIFSIGNALED(status))
-            //         syslog(LOG_ERR, "Killed by signal %d%d\n",
-            //                WTERMSIG(status),
-            //                WCOREDUMP(status));
-
-            //     if (WIFSTOPPED(status))
-            //         syslog(LOG_ERR, "Stopped by signal %d\n", WSTOPSIG(status));
-            // }
         }
         else if (!pid)
         {
-            // not liking this. apparent using readlink() on /proc/self/exe can give up
-            // the absolute path of the current binary. might be the way to go.
-            char *const args[] = {"./aesdsocket", NULL};
+            /* grab the absolute path to this binary using /proc/self/exe */
+            const char *p = "/proc/self/exe";
+            /* PATH_MAX has problems but it will suffice here
+              see also: https://insanecoding.blogspot.com/2007/11/pathmax-simply-isnt.html) */
+            char path[PATH_MAX + 1];
+            const int rl_ret = readlink(p, path, PATH_MAX);
+            if (rl_ret == -1)
+            {
+                syslog(LOG_ERR, "Readlink error: %m");
+                exit(EXIT_FAILURE);
+            }
+            /* readlink does *not* null-terminate the buffer, so we need to do that here */
+            path[rl_ret] = '\0';
+
+            char *const args[] = {path, NULL};
             int ret;
 
-            ret = execv("./aesdsocket", args);
+            ret = execv(path, args);
             if (ret == -1)
             {
                 syslog(LOG_ERR, "Exec error: %m");
